@@ -1,0 +1,434 @@
+---
+title: "Forskningsdatapublikationer för Svenska lärosäten"
+title-block-banner: "#1F3963"
+description: "Enkel dashboard för Spårbara Data"
+date: last-modified
+date-format: "YYYY-MM-DD"
+mainfont: Figtree
+sansfont: Georgia
+footnotes-hover: true
+reference-location: margin
+lang: sv
+number-sections: false
+crossref:
+  chapters: true
+author:
+  - name: Mattias Vesterlund
+    orcid: 0000-0001-9471-6592
+    email: matves29@kth.se
+    url: https://kth.se
+    affiliations:
+      - name: KTH Library
+        address: Osquars backe 30
+        city: Stockholm
+        postal-code: 100 44
+        url: https://www.kth.se/biblioteket
+highlight-style: pygments
+fig-cap-location: top
+format: 
+  html:
+    grid:
+      sidebar-width: 150px
+      body-width: 1200px
+      margin-width: 0px
+      gutter-width: 1.5em
+editor: visual
+server: shiny
+---
+
+```{r echo = FALSE, message = F, warning = F}
+# Load necessary packages
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(shiny)
+library(shinyWidgets)
+library(scales)
+library(tidyr)
+library(plotly)
+```
+
+```{r load data, echo = FALSE,message = F, warnings = F}
+#| context: data
+#| include: false
+# Read and preprocess data
+## Either read directly from the roagg-repo on GitHub (commented out below), or use a local copy to load data. 
+#data<-read.csv("https://raw.githubusercontent.com/snd-sweden/research-output-aggregator-output/refs/heads/main/combined-outputs.csv")
+
+data<-read.csv("combined_outputs_jan_2025.csv")
+
+
+# Create color scale  
+
+SNDcolors<-c(rep(c("#1F3963","#649DD2","#E4462C","#C6D8E5","#C6CCB2","#a2b393","#7A9B76","#FED766","#FFC07F"),55))
+
+
+#Lock colors to ResourceType, Publication Location (clientId and clientName)
+rtypecols<-SNDcolors[1:length(unique(data$resourceType))]
+names(rtypecols)<-names(table(data$resourceType)[order(table(data$resourceType),decreasing = T)])
+publoccols<-SNDcolors[1:length(unique(data$dataCiteClientId))]
+names(publoccols)<-unique(data$dataCiteClientId)
+publoccols_name<-SNDcolors[1:length(unique(data$dataCiteClientName))]
+names(publoccols_name)<-names(table(data$dataCiteClientName)[order(table(data$dataCiteClientName),decreasing = T)])
+
+data$rtcol<-rtypecols[data$resourceType]
+data$plcol<-publoccols[data$dataCiteClientId]
+data$plcol_name<-publoccols_name[data$dataCiteClientName]
+
+# heatmapcol <- colorRampPalette(c("#649DD2", "#E4462C"))  
+
+#### 3 publications are missing years, these look incorrect and are filtered out here
+
+if (sum(is.na(data$publicationYear))) {
+  data<-data[-c(which(is.na(data$publicationYear))),]
+}
+  
+
+
+```
+
+```{r ui, echo = FALSE,message = F, warnings = F}
+
+
+
+fluidPage(
+  fluidRow(h1("Spårbara Data Dashboard")),
+  
+  fluidRow(
+    column(6,
+        selectInput("inst_select", "Välj Institution:", 
+                    choices = c("Alla", na.omit(unique(data$source))),
+                    selected = "Alla"),
+        sliderInput("pubyearSlider", label = "Publikations-år:", min = min(data$publicationYear), 
+        max = max(data$publicationYear), value = c(2000, 2025),sep = "")
+        ),
+    column(3,
+        radioButtons("Varfilt", "Variant-filter", choices=c("Alla","Senaste Vers.","Utan ConceptDoi"), selected = "Senaste Vers."),
+        
+        
+    ),
+    column(3,
+        radioButtons("Rtypesel", "Resourcetype", choices=c("Alla","Top 8","Eget val"), selected = "Alla"),
+        
+        
+        dropdownButton(
+          tags$h3("List of Input"),
+          
+          
+      
+          uiOutput("rtype_checkbox"),
+
+          circle = TRUE,
+          status = "default", 
+          icon = icon("gear"), width = "300px",
+          tooltip = tooltipOptions(title = "Click to see inputs !")
+          )
+    ),
+          
+  
+  column(12,
+    tabsetPanel(
+      
+      # Tab for ResourceType Plot
+      tabPanel("Resurstyp", 
+               plotOutput("rtype",  width = "100%"), downloadButton("download_rtype", "Download")),
+      
+        # Tab for rtype Plot -w stack for publisher
+      tabPanel("Resurstyp - med repositorier", 
+               plotlyOutput("rtype_stack", width = "100%")), 
+      
+      # Tab for Year-line Plot
+      tabPanel("Över tid", 
+               plotOutput("Outputperyear", width = "100%"), downloadButton("download_year", "Download")),
+      
+      # Tab for Publisher Plot
+      tabPanel("Repositorier", 
+               plotOutput("publoc", width = "100%"), downloadButton("download_publoc", "Download")),
+      
+            # Tab for Publisher Plot -w stack for rtyp
+      tabPanel("Repositorier - med resurstyp", 
+               plotlyOutput("publoc_stack", width = "100%")) 
+      
+    )
+  )
+)
+)
+```
+
+```{r uo, echo = F,message = F, warnings = F}
+#| context: server
+
+# Load necessary packages
+library(readxl)
+library(ggplot2)
+library(dplyr)
+library(lubridate)
+library(shiny)
+library(shinyWidgets)
+library(scales)
+library(tidyr)
+library(plotly)
+
+
+# Filtering function that filters either on conceptDOIs or Latest Version
+version_filter_data <- reactive({
+   if (input$Varfilt == "Alla") {
+     vfd1<-data
+     return(vfd1)
+   }else if(input$Varfilt == "Senaste Vers."){
+     vfd2<-filter(data, isLatestVersion == 1)
+     return(vfd2) 
+   }else if (input$Varfilt =="Utan ConceptDoi"){
+     vfd3<-filter(data, isConceptDoi == 0)
+     return(vfd3)
+   }
+})
+
+
+# Filtering function to select either all or a specific institution
+prefilter_data <- reactive({
+   if (input$inst_select == "Alla") {
+     pfd1<-version_filter_data()
+     pfd1u <- pfd1[!duplicated(pfd1$doi),]
+     return(pfd1u)
+   }else{
+     pfd2<-filter(version_filter_data(), source %in% input$inst_select)
+     return(pfd2) 
+   }
+})
+
+# Filter by selected resourcetypes
+ filtered_data <- reactive({
+   req(input$rtype_checkbox)
+   fd1<-filter(prefilter_data(), resourceType %in% input$rtype_checkbox)
+   return(fd1)
+  })
+
+ # Filter by both resourcetype and limit to top 10 locations to keep graph size manageable
+  filtered_data_publoc <- reactive({
+   req(input$rtype_checkbox)
+   fdp1<-filter(prefilter_data(), resourceType %in% input$rtype_checkbox)
+   fdp2<-filter(fdp1, dataCiteClientId %in% names(table(fdp1$dataCiteClientId)[order(table(fdp1$dataCiteClientId),decreasing = T)])[1:10])
+   return(fdp2)
+  })
+ 
+  # Filter by year, and calculate no of publications (for selected types) by year
+ year_data <- reactive ({
+   fd3<-filtered_data()
+   fd4<-fd3[fd3$publicationYear >= input$pubyearSlider[1] & fd3$publicationYear <= input$pubyearSlider[2],]
+   fd5<-as.data.frame(colSums(table(fd4$resourceType,fd4$publicationYear)))
+   fd5$year<-as.numeric(rownames(fd5))
+   colnames(fd5)<-c("count","year")
+   return(fd5)
+ })
+
+
+
+ 
+# Plot-function, returns a bar graph for resourcetypes
+  rtype_plot<- reactive({
+    ggplot(data = filtered_data(), aes(x = reorder(resourceType,resourceType,function(x)-length(x)),fill=resourceType)) +
+      geom_bar() +
+      labs(x = "", y = "Antal") +
+      scale_fill_manual('Resurstyp',values=rtypecols) +
+      theme_minimal() +
+      theme(panel.background = element_rect(fill = "white"),
+            plot.title = element_blank(),
+            axis.title = element_text(size = 18),
+            axis.text = element_text(size = 15),
+            legend.title = element_text(size = 18),
+            axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+            legend.text = element_text(size = 15)) 
+    })
+  
+# Plot-function, returns a line graph for publications per year  
+    year_plot<- reactive({
+    ggplot(data = year_data(), aes(x = year, y=count)) +
+      geom_line() +
+      labs(x = "År", y = "Antal") +
+      scale_color_manual(values="black") +
+      theme_minimal() +
+      theme(panel.background = element_rect(fill = "white"),
+            plot.title = element_blank(),
+            axis.title = element_text(size = 18),
+            axis.text = element_text(size = 15),
+            legend.title = element_text(size = 18),
+            axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+            legend.text = element_text(size = 15)) 
+    })
+    
+# Plot-function, returns a bar graph for top repositories  
+      publoc_plot<- reactive({
+        ggplot(data = filtered_data_publoc(), aes(x = reorder(dataCiteClientName,dataCiteClientName,function(x)-length(x)),fill=dataCiteClientName))+
+          geom_bar() +
+          labs(x = "Repositorie", y = "Antal") +
+          scale_fill_manual(values=publoccols_name) +
+          scale_x_discrete(labels = label_wrap(10)) +
+          theme_minimal() +
+          theme(panel.background = element_rect(fill = "white"),
+                plot.title = element_blank(),
+                axis.title = element_text(size = 18),
+                axis.text = element_text(size = 15),
+                legend.position="none")
+    })
+      
+      
+# Plot-function, returns a stacked bar graph for top repositories. Stacks are resourcetypes        
+      publoc_stack_plot<- reactive({
+        ggplot(data = filtered_data_publoc(), 
+                         aes(x = reorder(x=dataCiteClientName,dataCiteClientName,function(x)-length(x)),fill=forcats::fct_rev(forcats::fct_infreq(resourceType)), 
+                             text = after_stat(paste("Antal: ", count, "\nTyp: ", fill)))) +
+          geom_bar(position='stack') +
+          labs(x = "", y = "Antal") +
+          scale_fill_manual(values=rtypecols) +
+          scale_x_discrete(labels = label_wrap(10)) +
+          theme_minimal() +
+          theme(panel.background = element_rect(fill = "white"),
+                plot.title = element_blank(),
+                axis.title = element_blank(),
+                axis.text = element_text(size = 10),
+                legend.position="none")
+         })
+
+# Plot-function, returns a stacked bar graph for resourcetypes. Stacks are top repositories.            
+      rtype_stack_plot<- reactive({
+        ggplot(data = filtered_data(), 
+                         aes(x = reorder(x=resourceType,resourceType,function(x)-length(x)),fill=forcats::fct_rev(forcats::fct_infreq(dataCiteClientName)), 
+                             text = after_stat(paste("Antal: ", count, "\nRepo: ", fill)))) +
+          geom_bar(position='stack') +
+          labs(x = "", y = "Antal") +
+          scale_fill_manual(values=publoccols_name) +
+          theme_minimal() +
+          theme(panel.background = element_rect(fill = "white"),
+                plot.title = element_blank(),
+                axis.title = element_blank(),
+                axis.text = element_text(size = 10),
+                axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+                legend.position="none")
+         })
+  
+
+# Output section, adding additional selections to the resourcetype checkboxes
+    output$rtype_checkbox <- renderUI({
+      choice <-  unique(data$resourceType)[order(unique(data$resourceType))]
+      if (input$Rtypesel == "Top 8") {
+        if (input$inst_select == "Alla"){
+            slctd <- names(table(data$resourceType)[order(table(data$resourceType),decreasing=T)])[1:8]
+        }else{
+            fdt<-data[data$source %in% input$inst_select, ]
+            slctd <- names(table(fdt$resourceType)[order(table(fdt$resourceType),decreasing=T)])[1:8]
+        }
+        checkboxGroupInput("rtype_checkbox", "Välj Resurstyp:",
+                           choices = choice, 
+                           selected = slctd)
+      }else if ((input$Rtypesel == "Eget val")){
+        checkboxGroupInput("rtype_checkbox", "Välj Resurstyp:",
+                           choices = choice)
+      }else if ((input$Rtypesel == "Alla")){
+        checkboxGroupInput("rtype_checkbox", "Välj Resurstyp:",
+                           choices = choice,
+                           selected = choice)
+      }
+    })
+    
+
+
+    
+# Output section 
+  
+## Barplot for resourceType
+  output$rtype <- renderPlot({
+    rtype_plot()
+  })
+  
+
+    
+## Lineplot for Year
+  output$Outputperyear <- renderPlot({
+    year_plot()
+  })
+  
+  
+  ## barplot for publoc
+  output$publoc <- renderPlot({
+    publoc_plot()
+  })
+  
+      ## plotly barplot for publoc
+  output$publoc_stack <- renderPlotly({
+    ggplotly(publoc_stack_plot(), tooltip = "text")
+  })
+  
+        ## plotly barplot for rtype
+  output$rtype_stack <- renderPlotly({
+    ggplotly(rtype_stack_plot(), tooltip = "text")
+  })
+  
+# Download section 
+  
+## Download handler for Rtype plot
+  output$download_rtype <- downloadHandler(
+    filename = function(file) {
+      "rtype_plot.png"
+      },
+    content = function(file) {
+      ggsave(file, plot = rtype_plot(), width = 290, height = 265, units = "mm", device = "png")
+      }
+    )
+  
+  ## Download handler for Year plot
+  output$download_year <- downloadHandler(
+    filename = function(file) {
+      "year_plot.png"
+      },
+    content = function(file) {
+      ggsave(file, plot = year_plot(), width = 290, height = 265, units = "mm", device = "png")
+      }
+    )
+  
+    ## Download handler for Publoc plot
+  output$download_publoc <- downloadHandler(
+    filename = function(file) {
+      "publoc_plot.png"
+      },
+    content = function(file) {
+      ggsave(file, plot = publoc_plot(), width = 290, height = 265, units = "mm", device = "png")
+      }
+    )
+  
+  #No download handlers for the plotly-plots since they already contain a download option.
+
+  
+
+
+
+```
+
+### Användarinstruktion
+
+Överst finns filtreringsmöjligheter. Du kan välja Institution (högskola, universitet), ställa in tidsperiod (påverkar enbart figur 3 (Över tid)), och välja resurstyper, samt välja att filtrera kopplade DOIer.
+
+För resurstyper så kan du välja att Alla (Alla) är förikryssade, eller de 8 vanligaste (påverkas av val av institution), eller välja fritt (Eget val).
+
+Klicka på kugghjulet för att se vilka resurstyper som finns att välja.
+
+#### Tabbar
+
+**Resurstyp** : Barplot av alla resurstyper baserat på filtreringen (Institution, valda resurstyper, variantfilter)
+
+**Resurstyp - med repositorier** : Stacked Barplot som ovan. Interaktiv och visar repositorier och deras andel av visade resurstyper. För att ladda ned en bild klicka på kameran högst upp till höger i figuren.
+
+**Över tid** : Linjeplot över antal som publicerats per år. Ej kumulativt. Påverkas av alla filter.
+
+**Repositorier** : Barplot för 10 vanligaste repositorierna baserat på val av institution , variant och resurstyp.
+
+**Repositorier - med resurstyp** : Stacked Barplot som ovan. Interaktiv och visar andel av olika reurstyper för varje repositorie. För att ladda ned en bild klicka på kameran högst upp till höger i figuren.
+
+#### Länkar
+
+[Roagg källkod](https://github.com/snd-sweden/research-output-aggregator)
+
+[Roagg outputs](https://snd-sweden.github.io/research-output-aggregator-output/)
+
+[Översiktsrapport från projektet](https://zenodo.org/records/17365330)
