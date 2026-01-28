@@ -2,3 +2,6 @@
 .Rhistory
 .RData
 .Ruserdata
+shiny_app_sparbara.html
+shiny_app_sparbara_data/
+shiny_app_sparbara_files/

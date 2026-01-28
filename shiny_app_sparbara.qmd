@@ -53,10 +53,11 @@ library(plotly)
 #| context: data
 #| include: false
 # Read and preprocess data
-## Either read directly from the roagg-repo on GitHub (commented out below), or use a local copy to load data. 
-#data<-read.csv("https://raw.githubusercontent.com/snd-sweden/research-output-aggregator-output/refs/heads/main/combined-outputs.csv")
 
-data<-read.csv("combined_outputs_jan_2025.csv")
+## Either read directly from the roagg-repo on GitHub, or use a local copy to load data. 
+data<-read.csv("https://raw.githubusercontent.com/snd-sweden/research-output-aggregator-output/refs/heads/main/combined-outputs.csv")
+
+#data<-read.csv("PATH_TO_LOCAL_COPY.csv") 
 
 
 # Create color scale  
